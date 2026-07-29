@@ -49,9 +49,10 @@ Serializer::serializeSegment(const AST::ElementSegment &Seg,
                              std::vector<uint8_t> &OutVec) const noexcept {
   // Element segment: mode:u32 + tableidx:u32 + offset:expr + elemkind:reftype +
   // vec(u32) + vec(expr)
+  // Without BulkMemory/RefTypes, only the MVP form is legal: Active at table 0.
   if (!Conf.hasProposal(Proposal::BulkMemoryOperations) &&
       !Conf.hasProposal(Proposal::ReferenceTypes) &&
-      (Seg.getMode() != AST::ElementSegment::ElemMode::Passive ||
+      (Seg.getMode() != AST::ElementSegment::ElemMode::Active ||
        Seg.getIdx() != 0)) {
     return logNeedProposal(ErrCode::Value::ExpectedZeroByte,
                            Proposal::BulkMemoryOperations,
@@ -77,8 +78,14 @@ Serializer::serializeSegment(const AST::ElementSegment &Seg,
     return E;
   };
 
+  // Modes 0x00/0x04 imply funcref. Non-funcref active segments at table 0 must
+  // use an explicit table index so the reftype byte can be preserved (0x06).
+  const bool ForceExplicitType =
+      Seg.getMode() == AST::ElementSegment::ElemMode::Active &&
+      Seg.getIdx() == 0 && !Seg.getRefType().isFuncRefType();
+
   // Serialize idx.
-  if (Seg.getIdx() != 0) {
+  if (Seg.getIdx() != 0 || ForceExplicitType) {
     Mode |= 0x02;
     serializeU32(Seg.getIdx(), OutVec);
   }
@@ -90,8 +97,8 @@ Serializer::serializeSegment(const AST::ElementSegment &Seg,
   }
 
   // Distinguish between FuncIdx and Expr.
-  if (Seg.getInitExprs().size() != 0) {
-    auto IsInitExpr = false;
+  if (Seg.getInitExprs().size() != 0 || ForceExplicitType) {
+    auto IsInitExpr = ForceExplicitType;
     for (auto &Expr : Seg.getInitExprs()) {
       if (Expr.getInstrs().size() != 2 ||
           Expr.getInstrs()[0].getOpCode() != OpCode::Ref__func ||

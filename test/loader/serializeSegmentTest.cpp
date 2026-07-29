@@ -228,6 +228,10 @@ TEST(SerializeSegmentTest, SerializeElementSegment) {
   //       list.
   //   10. Serialize element segment with invalid checking byte without
   //       Ref-Types proposal.
+  //   11. Serialize active ExternRef at table 0 using mode 0x06 (not 0x04).
+  //   12. Serialize MVP active table-0 segment under WASM_1 (proposals off).
+  //   13. Reject Passive under WASM_1.
+  //   14. Reject Declarative under WASM_1.
 
   WasmEdge::AST::ElementSection ElementSec;
   WasmEdge::AST::ElementSegment ElementSeg;
@@ -367,6 +371,8 @@ TEST(SerializeSegmentTest, SerializeElementSegment) {
   EXPECT_EQ(Output, Expected);
 
   ElementSeg.setMode(WasmEdge::AST::ElementSegment::ElemMode::Active);
+  ElementSeg.setIdx(0x00U);
+  ElementSeg.setRefType(WasmEdge::TypeCode::FuncRef);
   ElementSeg.getExpr().getInstrs() = {I32Eqz, I32Eq, I32Ne, End};
   ElementSeg.getInitExprs().clear();
   ElementSeg.getInitExprs().emplace_back();
@@ -381,6 +387,30 @@ TEST(SerializeSegmentTest, SerializeElementSegment) {
       0x01U,                      // Vector length = 1
       0x04U,                      // Prefix checking byte
       0x45U, 0x46U, 0x47U, 0x0BU, // Offset expression
+      0x01U,                      // Vector length = 1
+      0x45U, 0x46U, 0x47U, 0x0BU, // Vec[0]
+  };
+  EXPECT_EQ(Output, Expected);
+
+  ElementSeg.setMode(WasmEdge::AST::ElementSegment::ElemMode::Active);
+  ElementSeg.setIdx(0x00U);
+  ElementSeg.setRefType(WasmEdge::TypeCode::ExternRef);
+  ElementSeg.getExpr().getInstrs() = {I32Eqz, I32Eq, I32Ne, End};
+  ElementSeg.getInitExprs().clear();
+  ElementSeg.getInitExprs().emplace_back();
+  ElementSeg.getInitExprs().back().getInstrs() = {I32Eqz, I32Eq, I32Ne, End};
+  ElementSec.getContent() = {ElementSeg};
+
+  Output = {};
+  EXPECT_TRUE(Ser.serializeSection(ElementSec, Output));
+  Expected = {
+      0x09U,                      // Element section
+      0x0DU,                      // Content size = 13
+      0x01U,                      // Vector length = 1
+      0x06U,                      // Mode 0x06 (explicit table idx + exprs)
+      0x00U,                      // TableIdx = 0
+      0x45U, 0x46U, 0x47U, 0x0BU, // Offset expression
+      0x6FU,                      // ExternRef
       0x01U,                      // Vector length = 1
       0x45U, 0x46U, 0x47U, 0x0BU, // Vec[0]
   };
@@ -442,6 +472,40 @@ TEST(SerializeSegmentTest, SerializeElementSegment) {
   };
   EXPECT_EQ(Output, Expected);
 
+  EXPECT_FALSE(SerWASM1.serializeSection(ElementSec, Output));
+
+  WasmEdge::AST::ElementSegment MvpSeg;
+  MvpSeg.setMode(WasmEdge::AST::ElementSegment::ElemMode::Active);
+  MvpSeg.setIdx(0x00U);
+  MvpSeg.setRefType(WasmEdge::TypeCode::FuncRef);
+  MvpSeg.getExpr().getInstrs() = {End};
+  ElementSec.getContent() = {MvpSeg};
+  Output = {};
+  EXPECT_TRUE(SerWASM1.serializeSection(ElementSec, Output));
+  Expected = {
+      0x09U, // Element section
+      0x04U, // Content size = 4
+      0x01U, // Vector length = 1
+      0x00U, // MVP active table-0 prefix
+      0x0BU, // Offset expression
+      0x00U  // Empty function indices
+  };
+  EXPECT_EQ(Output, Expected);
+
+  WasmEdge::AST::ElementSegment PassiveSeg;
+  PassiveSeg.setMode(WasmEdge::AST::ElementSegment::ElemMode::Passive);
+  PassiveSeg.setIdx(0x00U);
+  PassiveSeg.setRefType(WasmEdge::TypeCode::FuncRef);
+  ElementSec.getContent() = {PassiveSeg};
+  Output = {};
+  EXPECT_FALSE(SerWASM1.serializeSection(ElementSec, Output));
+
+  WasmEdge::AST::ElementSegment DeclSeg;
+  DeclSeg.setMode(WasmEdge::AST::ElementSegment::ElemMode::Declarative);
+  DeclSeg.setIdx(0x00U);
+  DeclSeg.setRefType(WasmEdge::TypeCode::FuncRef);
+  ElementSec.getContent() = {DeclSeg};
+  Output = {};
   EXPECT_FALSE(SerWASM1.serializeSection(ElementSec, Output));
 }
 
